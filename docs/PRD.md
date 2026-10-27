@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Approved (rev 2) |
+| **Status** | Approved (rev 3) |
 | **Date** | 2026-10-27 |
-| **Revisions** | rev 1: initial approval. rev 2: heatmap keyboard model (FR-HM-03, FR-HM-04, NFR-A11Y-02); polling stops after 3 minutes without interaction (NFR-POLL-02, NFR-POLL-04); decisions OQ-12 and OQ-13. |
+| **Revisions** | rev 1: initial approval. rev 2: heatmap keyboard model (FR-HM-03, FR-HM-04, NFR-A11Y-02); polling stops after 3 minutes without interaction (NFR-POLL-02, NFR-POLL-04); decisions OQ-12 and OQ-13. rev 3: wording only, no scope change: ranking of members with nothing scheduled (FR-HM-06), one-tap join (FR-ACC-01, FR-GRP-03, journey J1), the "Join with a code" screen; decisions OQ-14 and OQ-15. |
 | **Input** | `docs/BRIEF.md` + discovery decisions (personal targets, v1.0/v1.1 cut, pause, in-app-only nudges) + the v1.0 scope pass |
 | **Next document** | DB schema + API spec (the architecture is in `docs/TAD.md` and `docs/adr/`) |
 
@@ -100,9 +100,9 @@ These are deliberate and were approved during discovery.
 
 ### J1 — A new friend joins via invite  *(v1.0)*
 1. Receives an invite link from the owner and opens it, signed out, and is prompted to sign in or sign up.
-2. Signs up with Google or email and password, and is brought back to the invite automatically.
+2. Signs up with Google or email and password.
 3. Confirms profile: display name, a suggested unique handle, auto-detected timezone, avatar from their account.
-4. Is joined to the group and lands on its group view.
+4. Is brought back to the invite page automatically and taps **Join group**; lands on the group view.
 5. Is prompted to add a first target from templates, with "share with this group" pre-selected.
 6. Checks it off. Their name moves to **Active** in the roll call.
 
@@ -151,7 +151,7 @@ These are deliberate and were approved during discovery.
 
 **FR-ACC-01 [v1.0] Sign up and sign in**
 - Given a visitor, when they choose Google or email-and-password, then they are signed in (creating an account if new) and land in the app.
-- Given a signed-out visitor opened an invite link, when they finish signing in or up, then they return to that invite and are joined without re-entering the code.
+- Given a signed-out visitor opened an invite link, when they finish signing in or up (and confirming their profile), then they return to that invite page without re-entering the code and join with one tap on **Join group**; nobody is joined without that tap.
 
 **FR-ACC-02 [v1.0] Immediately usable after sign-up**
 - Given a user has just completed sign-up, when they reach the app, then their profile exists and every feature works with no waiting, retry or manual refresh.
@@ -182,9 +182,9 @@ These are deliberate and were approved during discovery.
 - Given a group, when its owner views invitation details, then they see an 8-character code (BR-GROUP-4) and a shareable link containing it, with copy and share-sheet actions.
 
 **FR-GRP-03 [v1.0] Join a group**
-- Given a valid code or link and a group with fewer than 15 members, when a signed-in user joins, then they become a MEMBER and see the group view.
-- Given the code is typed by hand, when it contains lowercase letters, spaces or hyphens, then it still works.
-- Given the user is already a member, when they open the link, then they are taken to the group with no duplicate membership.
+- Given a valid code or link and a group with fewer than 15 members, when a signed-in user taps **Join group** on the invite page (or submits the **Join with a code** form on the new-group screen), then they become a MEMBER and see the group view.
+- Given the code is typed by hand into the **Join with a code** form on the new-group screen, when it contains lowercase letters, spaces or hyphens, then it still works.
+- Given the user is already a member, when they use the invite again, then they are taken to the group with no duplicate membership.
 - Given the group has 15 members, when someone tries to join, then they are told the group is full and are not added, including when two people try at the same moment (exactly one gets the last place).
 - Given an invalid code, when someone tries it, then they see one generic "invite not valid" message that doesn't reveal whether the group exists.
 - Given a member who was removed earlier, when they use the invite again, then they rejoin like anyone else, their earlier shared history reappears, and they re-share the targets they want (BR-SHARE-6, BR-GROUP-6).
@@ -356,7 +356,8 @@ These are deliberate and were approved during discovery.
 - Given the comparison view, when cells are drawn, then they use the states of FR-HM-02, computed only from targets shared with that group (FR-VIS-03), with the viewer's current week at the right edge; where a member's own local date is behind the viewer's, their later cells are blank.
 
 **FR-HM-06 [v1.0] Default order**
-- Given the comparison view, when it is shown, then rows are ordered by current group streak descending, then last-7-day completion %, then name.
+- Given the comparison view, when it is shown, then rows are ordered by current group streak descending, then last-7-day completion % (completed ÷ scheduled tasks over the member's last seven local days in that group), then name.
+- Given a member with nothing scheduled in their last seven local days, when the comparison view is shown, then they appear after every member who has a last-7-day percentage, ordered by name.
 
 **FR-HM-07 [v1.1] Arrow-key navigation**
 - Given a keyboard user has focus in a heatmap, when they press an arrow key, then focus moves to the neighbouring day (left and right move one week, up and down move one day) and the whole heatmap needs only one Tab stop.
@@ -807,6 +808,8 @@ No product questions remain open. Everything below was resolved on 2026-10-27; o
 | OQ-11 | Rejoining after removal | A removed member **can rejoin** with the same invite; removal is not a ban in v1.0 (BR-GROUP-6). The rejoin scenario in FR-GRP-03 and BR-SHARE-5/6 therefore stay in v1.0. Keeping someone out requires regenerating the invite (FR-GRP-04, v1.1). |
 | OQ-12 | Heatmap keyboard model *(rev 2)* | Each heatmap is a **single keyboard stop** with a text summary and a day-by-day list; no arrow-key navigation in v1.0. The list replaces "tooltip on keyboard focus". |
 | OQ-13 | Polling idle stop *(rev 2)* | Refreshing stops after **3 minutes** without interaction (was 15); there is no 60-second tier; hidden tabs never refresh; refreshing resumes immediately on focus or interaction. |
+| OQ-14 | Ranking of members with nothing scheduled *(rev 3)* | They sort after every member who has a last-7-day percentage, then by name (FR-HM-06). |
+| OQ-15 | Joining takes one tap *(rev 3)* | Returning to an invite page never joins by itself: the visitor taps **Join group**. Codes typed by hand go through a **Join with a code** form on the new-group screen (FR-ACC-01, FR-GRP-03, journey J1). |
 
 ### 9.2 Carry-forward notes for the Technical Architecture Document
 
