@@ -2,13 +2,15 @@
 
 | | |
 |---|---|
-| **Status** | Approved (rev 1) |
+| **Status** | Approved (rev 2) |
 | **Date** | 2026-10-27 |
+| **Revisions** | rev 1: initial approval. rev 2: refinements found while designing the schema and API (`docs/DB_SCHEMA.md` §9, `docs/API_SPEC.md` §8.1), the documented `btree_gist` fallback, a one-tap join button, and test-plan items TP-08 and TP-09. |
 | **Inputs** | `docs/BRIEF.md`; `docs/PRD.md` (Approved rev 2), including the carry-forward notes in PRD §9.2 |
-| **Next documents** | DB schema + API spec, then tasks + test plan |
+| **Companions** | `docs/DB_SCHEMA.md` (schema and data rules), `docs/API_SPEC.md` (every surface) |
+| **Next documents** | Tasks + test plan |
 | **Decision records** | `docs/adr/0001` … `0006` (index in §1.5) |
 
-**Scope.** This document fixes the architecture: components, versions, algorithms, data flow, security and deployment. It does **not** contain the full Prisma schema or the endpoint contracts; those are the next document. Names of tables, routes and functions below are design handles that the schema/API documents may refine. Code blocks are TypeScript-flavoured pseudocode. `FR-`, `BR-`, `NFR-` IDs refer to the PRD.
+**Scope.** This document fixes the architecture: components, versions, algorithms, data flow, security and deployment. It does **not** contain the full Prisma schema or the endpoint contracts; those are in `docs/DB_SCHEMA.md` and `docs/API_SPEC.md`. Names of tables, routes and functions below are design handles that the schema/API documents may refine. Code blocks are TypeScript-flavoured pseudocode. `FR-`, `BR-`, `NFR-` IDs refer to the PRD.
 
 ---
 
@@ -196,9 +198,9 @@ pulse/
 │  │  │  ├─ onboarding/page.tsx
 │  │  │  ├─ today/page.tsx
 │  │  │  ├─ targets/ (page.tsx · new/page.tsx · [targetId]/page.tsx)
-│  │  │  ├─ groups/new/page.tsx
+│  │  │  ├─ groups/new/page.tsx   # create-group form and a "join with a code" form
 │  │  │  ├─ groups/[groupId]/ (page.tsx · members/page.tsx)
-│  │  │  ├─ join/[code]/page.tsx
+│  │  │  ├─ join/[code]/page.tsx   # shows a Join group button; never writes on GET
 │  │  │  └─ settings/profile/page.tsx
 │  │  └─ api/
 │  │     ├─ today/route.ts
@@ -218,7 +220,7 @@ pulse/
 │  │  ├─ schedule/  revision.ts · is-scheduled.ts · share-interval.ts · day-state.ts
 │  │  ├─ level.ts · streak.ts · rollcall.ts · invite-code.ts · limits.ts · templates.ts
 │  ├─ lib/
-│  │  ├─ db.ts · env.ts · result.ts · errors.ts · clock.ts · log-error.ts
+│  │  ├─ db.ts · env.ts · result.ts · errors.ts · clock.ts · log-error.ts · primitives.ts
 │  │  ├─ auth/ require-user.ts · ensure-user.ts · group-access.ts
 │  │  └─ query-client.tsx · theme.tsx
 │  └─ components/ui/              # shadcn output
@@ -244,7 +246,7 @@ Clerk handles Google OAuth and email/password, hosted sign-in UI and sessions. O
 
 | Route | Access |
 |---|---|
-| `/sign-in`, `/sign-up` | public |
+| `/sign-in`, `/sign-up`, `/manifest.webmanifest`, `/icons/*`, `/apple-icon*`, `/favicon.ico` | public (browsers fetch the manifest without credentials, so a protected manifest would break installability, FR-PWA-01) |
 | `/api/webhooks/clerk` | public, **signature-verified** |
 | everything else (pages, actions, `/api/*`) | `proxy.ts` calls `auth.protect()`; unauthenticated users are redirected to sign-in with the return URL kept |
 
@@ -271,13 +273,16 @@ sequenceDiagram
   A-->>F: redirect to /onboarding?next=/join/ABCD2345
   F->>A: confirm name, handle, timezone
   A->>D: update user, set onboardedAt
-  F->>A: GET /join/ABCD2345
+  F->>A: GET /join/ABCD2345 (shows a Join group button, writes nothing)
+  F->>A: tap Join group (Server Action joinGroup)
   A->>D: join in one transaction: lock group row, count ACTIVE below 15, insert membership
   A-->>F: redirect to the group
   C--)A: webhook user.created arrives later, idempotent upsert
 ```
 
-`(app)/layout.tsx` calls `requireUser()`. If `onboardedAt` is null and the path is not `/onboarding`, it redirects to `/onboarding?next=<path>`. This is how an invite survives sign-up and the profile step.
+`(app)/layout.tsx` calls `requireUser()`. If `onboardedAt` is null and the path is not `/onboarding`, it redirects to `/onboarding?next=<path>`. This is how an invite survives sign-up and the profile step. `next` is validated as a same-site path (no `//host`, no absolute URL, not under `/api`) before it is used.
+
+**The invite page never writes, and nobody joins without a user action.** After sign-in and onboarding the visitor lands on `/join/<code>`, which shows a one-tap **Join group** button. The button submits the `joinGroup` Server Action (API `A-04`), a POST. Prefetching or a link-preview bot therefore cannot join anyone.
 
 ### 4.3 User sync: lazy creation plus webhook (ADR-0002)
 
@@ -307,7 +312,7 @@ export async function POST(req: Request) {
 }
 ```
 
-Only `user.created`, `user.updated` and `user.deleted` are subscribed in the Clerk dashboard. All handlers are idempotent. `applyProfile` copies **display name, image URL and handle seed** into our table; **no read path ever calls Clerk for another member**, which is the foundation of NFR-REL-02.
+Only `user.created`, `user.updated` and `user.deleted` are subscribed in the Clerk dashboard. All handlers are idempotent. `applyProfile` copies the **display name** (`first_name` and `last_name`, else `username`, else "New member") and the **image URL** into our table, and never overwrites the member's handle (the handle is seeded only when `ensureUser` creates the row); **no read path ever calls Clerk for another member**, which is the foundation of NFR-REL-02.
 
 ### 4.4 Authorization helpers (FR-GRP-11, NFR-SEC-01)
 
@@ -347,9 +352,9 @@ export async function requireTargetOwner(targetId: string): Promise<Result<{ use
 
 FR-ACC-07 (full deletion) is v1.1. v1.0 does only the minimum that guarantees nothing breaks. On `user.deleted`, `tombstoneUser` runs in **one transaction**:
 
-1. `users`: set `deleted_at`, display name → "Former member", `image_url` → null, handle → `deleted_<id>` (frees the handle). **The row is kept** with its `clerk_id`, so a late `user.updated` cannot recreate it.
+1. `users`: set `deleted_at`, display name → "Former member", `image_url` → null, handle → `deleted_` plus the first 12 hex digits of the id (frees the handle). **The row is kept** with its `clerk_id`, so a late `user.updated` cannot recreate it.
 2. Their `memberships`: status → `REMOVED`, `ended_at` set. Because every group query already filters `status = 'ACTIVE'`, they vanish from roll call, comparison rows and feed exactly as BR-SHARE-5 describes for removal. **No new special cases in any read path.**
-3. Close all open `share_intervals` of their targets (`to_date` = their effective yesterday).
+3. Close all open `share_intervals` of their targets at their effective yesterday, or delete those that began today (`from_date` after that day), because `from_date <= to_date` must hold.
 4. Delete their `streak_prefixes`.
 5. **Nothing else is deleted.** Targets, entries, cards and reactions stay, so no foreign key can dangle.
 
@@ -405,7 +410,7 @@ const effectiveToday = (m: { zone: Zone; dateFloor: LocalDate | null }, now: Dat
   return m.dateFloor && m.dateFloor > cal ? m.dateFloor : cal          // the floor only matters while the new zone is behind
 }
 
-// changeTimezone(user, newZone): one transaction
+// the timezone-change step of updateProfile (API A-02): one transaction
 const floor = effectiveToday(user, now)          // the date they were on, in the OLD zone
 await db.user.update({ where: { id }, data: { timezone: newZone, dateFloor: floor } })
 await db.streakPrefix.deleteMany({ where: { userId: id } })                // cheap, rebuilt lazily
@@ -488,8 +493,10 @@ NFR-QUAL-01 test matrix (Vitest, run under several `TZ` values with a fake clock
 const revisionOn = (revs: Revision[] /* sorted by effectiveFrom */, d: LocalDate) =>
   lastWhere(revs, r => r.effectiveFrom <= d)                      // binary search; undefined before the first
 
-const inactiveKindOn = (periods: InactivePeriod[], d: LocalDate) =>
-  periods.find(p => p.fromDate <= d && (p.toDate === null || d <= p.toDate))?.kind   // ARCHIVED | PAUSED | undefined
+const inactiveKindOn = (periods: InactivePeriod[], d: LocalDate) => {
+  const kinds = periods.filter(p => p.fromDate <= d && (p.toDate === null || d <= p.toDate)).map(p => p.kind)
+  return kinds.includes('ARCHIVED') ? 'ARCHIVED' : kinds.includes('PAUSED') ? 'PAUSED' : undefined   // ARCHIVED wins when both cover the date
+}
 
 // Tracked = counts toward "something exists on this day". Archived days are NOT tracked; paused days ARE tracked.
 const isTracked = (t: Target, periods, d) => d >= t.startDate && inactiveKindOn(periods, d) !== 'ARCHIVED'
@@ -533,12 +540,16 @@ async function unshare(tx, targetId, groupId, today) {          // BR-SHARE-3: c
 }
 
 async function onMemberRemoved(tx, userId, groupId, theirToday) { // BR-SHARE-5: immediate, history kept
-  await closeAllOpen(tx, { ownerId: userId, groupId }, /* toDate */ addDays(theirToday, -1))
-  await tx.streakPrefix.delete({ where: { userId_groupId: { userId, groupId } } })
+  const closeAt = addDays(theirToday, -1)
+  await deleteOpenBeginningAfter(tx, { ownerId: userId, groupId }, closeAt)   // began today: it never counted, and from_date <= to_date must hold
+  await closeAllOpen(tx, { ownerId: userId, groupId }, /* toDate */ closeAt)
+  await tx.streakPrefix.deleteMany({ where: { userId, groupId } })
 }
 ```
 
 Rejoin (BR-SHARE-6) changes only `memberships.status` back to `ACTIVE` and clears the prefix cache; **no interval is reopened**, so the member re-shares what they want and the absence days are untracked automatically.
+
+**Newly shared groups get today's card.** When `setShares` adds a group it also runs `syncFeedCards` for today (§6.6), so a target that already has progress today shows on that group's card immediately. Cards of groups the target was removed from are not touched (FR-VIS-05).
 
 Constraints that Prisma cannot express are added as SQL in the migration (§14.3): at most one open interval per (target, group), and no overlapping intervals.
 
@@ -638,7 +649,7 @@ See §5.6 (it needs the timezone context). It runs inside the poll handler and o
 `feed_cards` is unique on `(group_id, user_id, local_date, kind)`; v1.0 only writes `kind = DAILY_PROGRESS`. The card row holds **no copy of the content**; the body is derived when read, so it always agrees with share intervals and rules.
 
 ```ts
-// inside recordProgress's transaction (§6.7), after the entry upsert
+// inside recordProgress's transaction (§6.7), after the entry upsert; setShares (§6.2) also calls it for each newly shared group
 const groups = await groupsSharingOn(tx, target.id, date)             // active share interval covers `date`, owner membership ACTIVE
 for (const g of groups) {
   const n = await sharedProgressCount(tx, userId, g, date)            // shared, scheduled tasks on `date` with value > 0
@@ -701,6 +712,8 @@ Round trips: user, target + rule facts, intervals, entry upsert, card sync: abou
 | Feed older pages | none | `GET …/feed?cursor=` (infinite query) | on scroll |
 | Targets, profile, onboarding | Server Component | none (forms call Server Actions, then `router.refresh()`) | none |
 
+The Today page has two loaders: the checklist (`['today']`) and the personal heatmap, which is its own Suspense boundary so the checklist never waits for the 52-week read.
+
 Server Components call `features/*/server/queries.ts` directly. Client components get their first data as `initialData` (with `initialDataUpdatedAt` = server time) and never show a loading spinner for the first paint.
 
 ### 7.2 The single consolidated poll endpoint (NFR-POLL-03)
@@ -710,8 +723,8 @@ Server Components call `features/*/server/queries.ts` directly. Client component
 ```ts
 type Pulse = {
   serverTime: string                 // ISO instant
-  pollHintMs: number                 // ≥ 20_000; the server can raise it to degrade (§12.4)
-  idleStopMin: number                // 3 by default, 1 at level L1 (§12.4)
+  pollHintMs: number | null          // ≥ 20_000; the server can raise it to degrade; null = no background polling (level L2, §12.4)
+  idleStopMin: number                // 3 at L0, 1 at L1, 0 at L2 (§12.4)
   viewerToday: LocalDate
   members: Array<{
     userId: string
@@ -719,13 +732,13 @@ type Pulse = {
     state: 'ACTIVE'|'NOT_YET'|'SLACKING'|'REST_DAY'|'NO_TARGETS_SHARED'
     done: number; scheduled: number  // member's today, group scope
     streak: number                   // group scope, current (§6.4)
-    recent: Array<{ date: LocalDate; done: number; scheduled: number; tracked: boolean }>   // yesterday and today
+    recent: DayCell[]                // exactly two cells, yesterday then today, each with its day state (API_SPEC §1.5)
   }>
-  feed: { cards: FeedCardDTO[] }     // page 1 with reaction counts and the viewer's own reactions
+  feed: { cards: FeedCardDTO[]; nextCursor: string | null }   // page 1 with reaction counts and the viewer's own reactions
 }                                    // v1.1 adds: unread: number
 ```
 
-The client merges `recent` into the last two cells of each strip, replaces page 1 of the feed (deduplicating by id, so older loaded pages stay), and re-renders the roll call.
+The client merges `recent` into the last two cells of each strip, replaces page 1 of the feed (deduplicating by id, so older loaded pages stay), and re-renders the roll call. **The poll never reorders members**: the overview owns the default order (FR-HM-06). If the set of member ids differs from the overview's (someone joined or was removed), the client refreshes the page.
 
 **Database reads per poll (bounded, no history scans):** active members (≤ 15 rows) · shared structure for the group (targets, revisions, inactive periods, intervals: ≤ ~150 targets) · entries for ≤ 4 dates · ≤ 15 streak-prefix rows · feed page 1 with reaction counts. **Budget: ≤ 20 KB read from the database and ≤ 40 ms of CPU per poll** (§12.3).
 
@@ -786,7 +799,7 @@ onSettled: (res) => { qc.invalidateQueries({ queryKey: ['today'] }); res?.ok && 
 | `createTarget`, `updateTarget`, `archiveTarget`, `deleteTarget`, `setShares` | none | `['today']`; `router.refresh()` (re-runs Server Components); `['group', g, 'pulse']` for affected groups |
 | `createGroup`, `joinGroup`, `removeMember`, `selectGroup` | none | `router.refresh()`; group list |
 | `toggleReaction` | the card's reaction counts in the `pulse` cache | `['group', g, 'pulse']` |
-| `updateProfile`, `changeTimezone` | none | `queryClient.clear()` then `router.refresh()` (today and yesterday change) |
+| `updateProfile` (includes a timezone change) | none | `queryClient.clear()` then `router.refresh()` (today and yesterday change) |
 | sign-out | none | `queryClient.clear()` (no data remains on the device, FR-ACC-06) |
 
 ---
@@ -856,12 +869,12 @@ export type AppError = {
 | Code | Used for | HTTP (route handlers) | UI behaviour |
 |---|---|---|---|
 | `UNAUTHENTICATED` | no session or tombstoned user | 401 | redirect to sign-in |
-| `NOT_FOUND` | unknown, deleted **or not-a-member** group; not-owner target | 404 | "Not found" page. One message, no hints (FR-GRP-11, FR-GRP-03) |
+| `NOT_FOUND` | unknown, deleted **or not-a-member** group; not-owner target; an invalid invite code | 404 | "Not found" page. One message, no hints (FR-GRP-11, FR-GRP-03) |
 | `FORBIDDEN` | a member attempting an owner-only action | 403 | inline message |
 | `VALIDATION` | Zod failure, goal out of range, handle taken | 422 | field errors |
 | `CONFLICT` | unique violation (handle) | 409 | inline message |
 | `STALE_DAY` | `expectedDate` ≠ server-resolved date | 409 | refetch Today, short notice |
-| `NOT_SCHEDULED` / `OUT_OF_WINDOW` | progress on a day that is not scheduled or older than yesterday | 422 | refetch Today |
+| `NOT_SCHEDULED` / `OUT_OF_WINDOW` | progress on a day that is not scheduled (`NOT_SCHEDULED`); a write older than yesterday (`OUT_OF_WINDOW`, raised only by a repository guard because the day token cannot express such a date) | 422 | refetch Today |
 | `GROUP_FULL` | 16th joiner | 409 | "Group is full" |
 | `RATE_LIMITED` | v1.1 | 429 | wait message |
 | `INTERNAL` | anything unexpected | 500 | generic "Something went wrong" |
@@ -884,14 +897,14 @@ Every exported Server Action is built with `defineAction`, so **input validation
 
 ### 9.3 Validation with Zod (4.6.7)
 
-- Each feature owns `schema.ts`. **The same schema validates the form on the client and the action on the server.**
+- Each feature owns `schema.ts`; shared primitives (`localDate`, `zone`, `handle`, `nextPath`, …) live in `lib/primitives.ts`. **The same schema validates the form on the client and the action on the server.**
 - `core/limits.ts` holds every PRD number once (name lengths, goal ranges, caps, quick-add values, cutoff, group cap). Zod schemas, UI hints and the algorithms all import from it.
 - Branded primitives: `localDate = z.iso.date()` (plus calendar validity), `zone = z.string().refine(isIanaZone)`, `inviteCode` (normalised: upper-case, spaces and hyphens removed, then matched against the 31-symbol alphabet), `handle` (BR-ID).
 - Boundaries that always validate: every Server Action input, every route-handler param/query, the webhook (event type and the fields we read), and environment variables at boot (`lib/env.ts` parses `process.env` with Zod and fails the build or boot if anything is missing).
 
 ### 9.4 Error recording (NFR-OPS-01)
 
-Vercel Hobby keeps runtime logs for **1 hour** (Vercel Hobby plan page), and log drains are Pro. So `logError` writes a row to `error_events` (`at`, `where`, `code`, `user_id?`, `message` truncated to 500 characters, `fingerprint`) and `console.error`s a structured line. Rows older than 30 days are deleted opportunistically on write. No stack traces with personal data; no third-party service. Rows are inspected with the Neon SQL editor.
+Vercel Hobby keeps runtime logs for **1 hour** (Vercel Hobby plan page), and log drains are Pro. So `logError` writes a row to `error_events` (`at`, `source`, `code`, `user_id?`, `message` truncated to 500 characters, `fingerprint`) and `console.error`s a structured line. Rows older than 30 days are deleted opportunistically on write. No stack traces with personal data; no third-party service. Rows are inspected with the Neon SQL editor.
 
 ---
 
@@ -906,7 +919,7 @@ Vercel Hobby keeps runtime logs for **1 hour** (Vercel Hobby plan page), and log
 | **Secrets** | Only in Vercel environment variables (per environment) and an uncommitted `.env.local`. `.env.example` lists names only. Anything without the `NEXT_PUBLIC_` prefix is server-only; `lib/env.ts` exposes server and public variables through separate modules so the server one cannot be imported into client code (`server-only`). No secret in client bundles, logs or error rows. Rotate the Clerk secret and webhook secret if exposed. |
 | **CSRF / origin** | Server Actions are POST with Next's built-in origin check. GET route handlers are read-only. The webhook authenticates by signature, not cookie. |
 | **Injection** | Prisma parameterises all queries. Raw SQL is limited to migrations and the few constraint statements, written with fixed text. |
-| **Input bounds** | Zod caps on every string and number; request bodies are small by construction. |
+| **Input bounds** | Zod caps on every string and number; request bodies are small by construction. Redirect targets (`next`) must be same-site paths (`nextPath`), which closes the open-redirect hole. |
 | **Invite codes** | 8 characters from a 31-symbol alphabet (≈ 8.5 × 10¹¹), generated with a cryptographic RNG (`crypto.randomInt`). **No attempt rate limit in v1.0** (BR-GROUP-5 is v1.1); the code space is the protection (PRD §9.2 note 4). v1.1 stores attempt counters in the database (no Redis). |
 | **Time** | Dates and clocks from devices are never trusted (§5.1). |
 | **Headers** | `next.config.ts` sets `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` (camera, microphone, geolocation off), `X-Frame-Options: DENY`. A Content-Security-Policy compatible with Clerk's hosted UI is added at scaffold time from Clerk's documented origins. |
@@ -1009,7 +1022,7 @@ If the minimum compute size is 0.5 CU rather than 0.25, double every row (scenar
 
 ### 12.4 Degradation ladder
 
-`PULSE_POLL_MODE` is read by the poll handler and returned to clients as `pollHintMs` and `idleStopMin`, so changing it needs an env change and a redeploy, never a client release. Levels L1 and L2 are defined in PRD rev 2 (NFR-POLL-04), so using them needs no further approval.
+`PULSE_POLL_MODE` is read by the poll handler and returned to clients as `pollHintMs` and `idleStopMin`, so changing it needs an env change and a redeploy, never a client release. The values are fixed per mode: L0 = 20 000 ms and 3 minutes, L1 = 20 000 ms and 1 minute, L2 = `null` and 0 (no background refreshing). Levels L1 and L2 are defined in PRD rev 2 (NFR-POLL-04), so using them needs no further approval.
 
 | Level | Behaviour | Effect on scenario 2 (41 CU-h) | When to use |
 |---|---|---|---|
@@ -1042,7 +1055,7 @@ Component names are the folders in §3. `api/pulse`, `api/today`, `api/feed` and
 | FR-ACC-06 | Sign out | Clerk user menu in the shell, `lib/query-client` (cache cleared) |
 | FR-GRP-01 | Create a group | `features/groups` (`createGroup`), `core/invite-code`, `core/limits` |
 | FR-GRP-02 | Invite code and link | `features/groups` (invite panel, share sheet), `core/invite-code`, `NEXT_PUBLIC_APP_URL` |
-| FR-GRP-03 | Join a group | `features/groups` (`joinGroup`: locked, capped transaction), `core/invite-code` (normalise), `app/join/[code]` |
+| FR-GRP-03 | Join a group | `features/groups` (`joinGroup`: locked, capped transaction), `core/invite-code` (normalise), `app/join/[code]` (one-tap Join group button), `app/groups/new` ("join with a code" form) |
 | FR-GRP-05 | Group switcher | `features/groups` (switcher, `selectGroup`, last-group cookie) |
 | FR-GRP-07 | Member list and removal | `features/groups` (members page, `removeMember`), `features/sharing` (close intervals), `lib/auth/group-access` (OWNER) |
 | FR-GRP-11 | Membership verified on every action | `lib/auth/group-access` (branded `GroupAccess`), signatures of every `features/*/server/queries` |
@@ -1091,7 +1104,7 @@ Component names are the folders in §3. `api/pulse`, `api/today`, `api/feed` and
 | FR-REA-03 | Reactions follow their card | `features/reactions` (cascade delete; filtered to active members) |
 | FR-PWA-01 | Installable | `app/manifest.ts`, `public/icons`, apple icon, theme-colour meta |
 | FR-PWA-03 | Installed behaviour | manifest (`start_url`, `display`), Clerk session persistence |
-| FR-PWA-05 | Works without installing | no service-worker dependency; responsive layout |
+| FR-PWA-05 | Works without installing | no dedicated surface (a property of every page): no service-worker dependency; responsive layout; verified by test-plan item TP-08 (API_SPEC §7.1) |
 
 ### 13.2 Non-functional requirements → mechanism
 
@@ -1135,18 +1148,18 @@ erDiagram
 
 | Table | Key columns (conceptual) | Notes |
 |---|---|---|
-| `users` | `id`, `clerk_id` (unique), `handle` (unique, case-insensitive), `display_name`, `image_url`, `timezone`, `date_floor`, `onboarded_at`, `deleted_at` | `deleted_at` and tombstone behaviour exist from day one (§4.5). No email column. |
+| `users` | `id`, `clerk_id` (unique), `handle` (unique; stored lowercase), `display_name`, `image_url`, `timezone`, `date_floor`, `onboarded_at`, `deleted_at` | `deleted_at` and tombstone behaviour exist from day one (§4.5). No email column. |
 | `groups` | `id`, `name`, `invite_code` (unique), `created_at`, `deleted_at` | `deleted_at` exists from day one: groups are retired, not erased (v1.1 delete). |
 | `memberships` | `id`, `user_id`, `group_id`, `role` (OWNER, MEMBER), `status` (ACTIVE, REMOVED, LEFT), `joined_at`, `ended_at` | Unique `(user_id, group_id)`: rejoin flips the status. At most one `ACTIVE` OWNER per group (partial unique index); zero is allowed (§4.5). `LEFT` is unused in v1.0. |
 | `targets` | `id`, `owner_id`, `name`, `mode` (CHECKBOX, COUNT, DURATION), `unit`, `start_date`, `created_at` | Hard-deletable only without history (FR-TGT-08). |
-| `target_revisions` | `target_id`, `effective_from`, `goal`, `frequency` (DAILY, SPECIFIC_DAYS), `weekdays int[]` | Unique `(target_id, effective_from)`. First row has `effective_from = start_date`. |
-| `target_inactive_periods` | `target_id`, `kind` (ARCHIVED, PAUSED), `from_date`, `to_date?` | v1.0 writes only `ARCHIVED`. **`PAUSED` is defined now**, so pause and restore need no migration. |
+| `target_revisions` | `target_id`, `effective_from`, `goal`, `frequency` (DAILY, SPECIFIC_DAYS), `weekdays int[]` | Primary key `(target_id, effective_from)`. First row has `effective_from = start_date`. |
+| `target_inactive_periods` | `target_id`, `kind` (ARCHIVED, PAUSED), `from_date`, `to_date?` | v1.0 writes only `ARCHIVED`. **`PAUSED` is defined now**, so pause and restore need no migration. `ARCHIVED` wins when both kinds cover a date. |
 | `share_intervals` | `target_id`, `group_id`, `from_date`, `to_date?` | Inclusive. One open interval per `(target, group)`; no overlaps (SQL constraints). |
-| `entries` | `target_id`, `local_date`, `value`, `updated_at` | Unique `(target_id, local_date)`. A zero is stored as a deleted row. |
+| `entries` | `target_id`, `local_date`, `value`, `updated_at` | Primary key `(target_id, local_date)`. A zero is stored as a deleted row. |
 | `feed_cards` | `id`, `group_id`, `user_id`, `local_date`, `kind` (DAILY_PROGRESS), `last_activity_at` | Unique `(group_id, user_id, local_date, kind)`; index `(group_id, last_activity_at desc, id desc)`. |
 | `reactions` | `card_id`, `user_id`, `emoji` (5 values), `created_at` | Unique `(card_id, user_id, emoji)`; cascade on card delete. |
 | `streak_prefixes` | `user_id`, `group_id`, `through_date`, `run`, `algo_version` | Derived cache; safe to delete at any time. |
-| `error_events` | `id`, `at`, `where`, `code`, `user_id?`, `message`, `fingerprint` | §9.4. |
+| `error_events` | `id`, `at`, `source`, `code`, `user_id?`, `message`, `fingerprint` | §9.4. |
 
 ### 14.2 v1.1 readiness
 
@@ -1175,9 +1188,9 @@ The four concerns you named (owner role, membership status, share intervals, tar
 
 - Partial unique index: one `ACTIVE` OWNER per group.
 - Partial unique index: at most one open (`to_date IS NULL`) share interval per `(target_id, group_id)`.
-- Exclusion constraint (`btree_gist`) or a transactional check: no overlapping share intervals, and no overlapping inactive periods of the same kind.
+- Exclusion constraints (`btree_gist`): no overlapping share intervals, and no overlapping inactive periods of the same kind. Neon's [supported extensions page](https://neon.com/docs/extensions/pg-extensions) lists `btree_gist` as supported (1.6 on PG14, 1.7 on PG15–17, 1.8 on PG18) with no Free-plan restriction, so this is the primary design. A tested fallback (a trigger that serialises writers with an advisory lock and raises the same SQLSTATE) is in `docs/DB_SCHEMA.md` §3.1.
 - `CHECK` constraints for value caps and for `from_date <= to_date`.
-- Case-insensitive uniqueness for `handle` (functional unique index on `lower(handle)`).
+- `handle` is stored lowercase with a format `CHECK`, so a plain unique index is case-insensitive. The full SQL is in `docs/DB_SCHEMA.md` §3.
 
 ---
 
@@ -1185,7 +1198,7 @@ The four concerns you named (owner role, membership status, share intervals, tar
 
 | ID | Item | Why it matters | Outcome needed |
 |---|---|---|---|
-| S1 | Prisma 7.10.1 + `@prisma/adapter-neon` on Vercel Node 24 | Prisma's Neon page shows an older adapter version and is ambiguous about where the datasource URL lives (`prisma.config.ts` vs the schema). Also confirm a global WebSocket suffices (no `ws`), cold-start timeouts (`connect_timeout`, `pool_timeout`), and which function regions Hobby allows. | working migrate + query path before any feature work |
+| S1 | Prisma 7.10.1 + `@prisma/adapter-neon` on Vercel Node 24 | Prisma's Neon page shows an older adapter version and is ambiguous about where the datasource URL lives (`prisma.config.ts` vs the schema). Also confirm a global WebSocket suffices (no `ws`), cold-start timeouts (`connect_timeout`, `pool_timeout`), and which function regions Hobby allows. Also run `CREATE EXTENSION btree_gist` on the real project (documented as supported; fallback in DB_SCHEMA §3.1) and confirm that `prisma migrate dev` reports no drift after the hand-written migration. | working migrate + query path before any feature work |
 | S2 | `create-next-app` 16.4.3 with TypeScript 6.0.3 and ESLint 9.39.5 | Version pins in §0.2 are reasoned from peer ranges, not yet built. | clean install, build and lint |
 | S3 | Measure the poll handler | CPU ≤ 40 ms p95 and ≤ 20 KB database bytes against 15 seeded members | numbers in the budget table replaced by measurements |
 | S4 | Installability on real devices without a service worker | web.dev lists no service-worker requirement but also does not cover iOS | Android Chrome and iOS Home Screen installs verified (launch criterion) |
@@ -1196,7 +1209,7 @@ The four concerns you named (owner role, membership status, share intervals, tar
 | R3 | `eslint-config-next`, `typescript-eslint` and Next may move together | Our pins could block upgrades | revisit pins quarterly |
 | R4 | Streak cache drift | A cached streak that disagrees with the full computation would show wrong numbers to the group | TP-01 (§16), `verifyStreakCache`, explicit invalidation rules (§6.4) |
 
-No questions are open. The next document is the DB schema + API spec.
+No questions are open. The schema and the API are specified in `docs/DB_SCHEMA.md` and `docs/API_SPEC.md`; the next document is the tasks + test plan.
 
 ---
 
@@ -1213,6 +1226,8 @@ The test plan (a later document) must cover at least the items below. Each alrea
 | TP-05 | The 15-member cap holds under concurrent joins (FR-GRP-03, NFR-REL-01). | §4.2, §14.1 |
 | TP-06 | The poll handler stays within ≤ 40 ms CPU (p95) and ≤ 20 KB of database reads for 15 seeded members. | §7.2, §12.3 |
 | TP-07 | Rapid taps on one task are applied in order and exactly once, a failed save rolls back with a visible message, and a stale day is detected (FR-CHK-06/08). | §7.4, §5.5 |
+| TP-08 | The complete v1.0 flow works in an ordinary browser tab: no installation and no service worker (FR-PWA-05, the one v1.0 requirement with no dedicated surface). | §1.4, API_SPEC §7.1 |
+| TP-09 | *Only if the `btree_gist` fallback is ever adopted:* two concurrent transactions writing overlapping share intervals (or inactive periods) for the same key are serialised and the second is rejected with SQLSTATE `23P01`. | DB_SCHEMA §3.1 |
 
 ### TP-01: cached streaks must equal a full recomputation
 
