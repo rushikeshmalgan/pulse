@@ -2,10 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | Approved (rev 1) |
+| **Status** | Approved (rev 2) |
 | **Date** | 2026-10-27 |
+| **Revisions** | rev 1: initial approval. rev 2: heatmap keyboard model (FR-HM-03, FR-HM-04, NFR-A11Y-02); polling stops after 3 minutes without interaction (NFR-POLL-02, NFR-POLL-04); decisions OQ-12 and OQ-13. |
 | **Input** | `docs/BRIEF.md` + discovery decisions (personal targets, v1.0/v1.1 cut, pause, in-app-only nudges) + the v1.0 scope pass |
-| **Next document** | Technical Architecture Document + ADRs |
+| **Next document** | DB schema + API spec (the architecture is in `docs/TAD.md` and `docs/adr/`) |
 
 **How to read this document.** This PRD says *what* Pulse does and *how well*, never *how it is built*. Every functional requirement has an ID (`FR-AREA-NN`) and a release tag, **[v1.0]** or **[v1.1]**. Exact values live in Business Rules (`BR-*`); quality targets live in Non-Functional Requirements (`NFR-*`). Scenarios are written Given / When / Then.
 
@@ -343,10 +344,11 @@ These are deliberate and were approved during discovery.
 - Given a day with nothing scheduled and a day that was missed, when both are shown, then they are visibly different.
 
 **FR-HM-03 [v1.0] Tooltip**
-- Given a heatmap cell, when a pointer hovers it, it receives keyboard focus, or it is tapped, then a tooltip shows the full date, "X of Y tasks", the percentage, and for non-numeric states a label ("Nothing scheduled", "Not tracked").
+- Given a heatmap cell, when a pointer hovers it or it is tapped, then a tooltip shows the full date, "X of Y tasks", the percentage, and for non-numeric states a label ("Nothing scheduled", "Not tracked").
+- Given a keyboard or screen-reader user, when they open the day-by-day list (FR-HM-04), then every day shown gives the same information: full date, "X of Y tasks", percentage and state label.
 
 **FR-HM-04 [v1.0] Accessibility and themes**
-- Given a keyboard or screen-reader user, when they move through the heatmap, then every cell can receive keyboard focus and is announced with its date and result.
+- Given a keyboard or screen-reader user, when they reach a heatmap, then it is announced as one item with a text summary of the period, it needs a single Tab stop, and it offers a day-by-day list giving each day's date, "X of Y tasks", percentage and state.
 - Given any theme, when a cell or state is shown, then its meaning never depends on colour alone (states also differ by pattern or outline) and contrast meets WCAG 2.1 AA in both light and dark themes.
 
 **FR-HM-05 [v1.0] Group comparison view**
@@ -683,9 +685,9 @@ The 18:00 cutoff is the same for everyone and not configurable in v1.0 / v1.1.
 | ID | Requirement |
 |---|---|
 | NFR-POLL-01 | Only the **group view** refreshes on a schedule, and **only while the app is visible in the foreground**. A hidden or background tab makes **0** requests. Other screens refresh on open and on regaining focus (at most once per 10 s). |
-| NFR-POLL-02 | **Cadence and cap.** While the group view is open and visible and the user interacted in the last 5 minutes: one refresh every **20 s**, i.e. at most **180 requests per active user per hour**. After 5 minutes without interaction: every 60 s (at most **60** per hour). After 15 minutes without interaction: refreshing stops until the user returns. |
+| NFR-POLL-02 | **Cadence and cap.** While the group view is open and visible and the user interacted in the last **3 minutes**: one refresh every **20 s**, i.e. at most **180 requests per active user per hour**. After 3 minutes without interaction, refreshing **stops**. A hidden or background tab never refreshes. When the tab becomes visible again or the user interacts, refreshing **resumes immediately** (an immediate refresh if the data is more than 10 s old, then every 20 s). |
 | NFR-POLL-03 | **One request per cycle.** A refresh cycle fetches everything the group view needs (roll call, new feed activity and reactions, and in v1.1 the unread-notification count) in a single request. |
-| NFR-POLL-04 | **Planning figures.** Expected use (15 members × 20 minutes a day on the group view) ≈ 27,000 refresh requests a month. Worst case at the cap (15 members × 2 hours a day) ≈ 162,000 a month. The architecture phase must verify the expected figure plus normal traffic fits the free-tier request quota in force at build time; if it doesn't, cadence is relaxed (30 s = 120 per hour, 60 s = 60 per hour) before any feature is cut. |
+| NFR-POLL-04 | **Planning figures.** Expected use (15 members × 2 visits a day, about 3 minutes each) is 9 to 18 refreshes per visit, so ≈ 8,000 to 16,000 refresh requests a month. Stress ceiling at the cap (15 members interacting continuously for 2 hours a day) ≈ 162,000 a month. The architecture phase must verify that the expected figure plus normal traffic fits the free-tier request quota and database compute hours in force at build time. If it doesn't, then before relaxing the cadence (30 s = 120 per hour, 60 s = 60 per hour) the architecture may shorten the 3-minute idle stop to 1 minute, and as a last resort remove background refreshing (refresh on focus and on pull only). No feature is cut for budget reasons before these steps. |
 | NFR-FRESH-01 | Another member's progress appears on a viewer's open group view within **45 s** (95th percentile). A member's own changes appear instantly on their own screen. |
 
 ### 6.3 Correctness and consistency
@@ -708,7 +710,7 @@ The 18:00 cutoff is the same for everyone and not configurable in v1.0 / v1.1.
 | ID | Requirement |
 |---|---|
 | NFR-A11Y-01 | WCAG 2.1 AA for all screens, in light and dark themes. |
-| NFR-A11Y-02 | Fully keyboard-operable; sensible screen-reader labels; colour never the only signal; reduced-motion preference respected (animation is used sparingly). In v1.0 each heatmap cell is a separate keyboard stop; arrow-key navigation arrives in v1.1 (FR-HM-07). |
+| NFR-A11Y-02 | Fully keyboard-operable; sensible screen-reader labels; colour never the only signal; reduced-motion preference respected (animation is used sparingly). In v1.0 each heatmap is a single keyboard stop with a text summary and a day-by-day list; arrow-key navigation arrives in v1.1 (FR-HM-07). |
 | NFR-A11Y-03 | Touch targets ≥ **44 × 44 px**. |
 | NFR-UX-01 | Mobile-first: all features usable from **360 px** wide with no horizontal page scroll (the heatmap may scroll within itself). |
 | NFR-UX-02 | Light and dark themes follow the device setting; the user can override. |
@@ -803,6 +805,8 @@ No product questions remain open. Everything below was resolved on 2026-10-27; o
 | OQ-9 | Limits | 15 members per group is enforced from v1.0. The limits of 10 groups per member and 10 active targets per member are enforced from v1.1; the 60-day pause is v1.1. |
 | OQ-10 | Free-tier headroom | Handed to the architecture phase (see 9.2). |
 | OQ-11 | Rejoining after removal | A removed member **can rejoin** with the same invite; removal is not a ban in v1.0 (BR-GROUP-6). The rejoin scenario in FR-GRP-03 and BR-SHARE-5/6 therefore stay in v1.0. Keeping someone out requires regenerating the invite (FR-GRP-04, v1.1). |
+| OQ-12 | Heatmap keyboard model *(rev 2)* | Each heatmap is a **single keyboard stop** with a text summary and a day-by-day list; no arrow-key navigation in v1.0. The list replaces "tooltip on keyboard focus". |
+| OQ-13 | Polling idle stop *(rev 2)* | Refreshing stops after **3 minutes** without interaction (was 15); there is no 60-second tier; hidden tabs never refresh; refreshing resumes immediately on focus or interaction. |
 
 ### 9.2 Carry-forward notes for the Technical Architecture Document
 
@@ -810,4 +814,4 @@ No product questions remain open. Everything below was resolved on 2026-10-27; o
 2. **Deleted users.** Even though FR-ACC-07 is v1.1, a user deleted in the sign-in provider must not break group pages for other members (NFR-REL-02). The design needs a defined behaviour for entries, memberships and ownership that point to a user who no longer exists. Owner succession (BR-OWN-3) is v1.1, so v1.0 only has to keep such a group working.
 3. **Cut screens, not concepts.** The v1.0 scope pass removed screens, not ideas. The design should still keep a single owner role, a membership state that can be active, removed or left, a history of when each target was shared with each group (BR-SHARE-4), target rule changes with effective dates (BR-TGT-5), and groups that are retired rather than erased, so v1.1 adds screens without reworking existing data.
 4. **No invite-attempt limit in v1.0.** Until BR-GROUP-5 ships in v1.1, protection against guessing rests on the size of the code space (NFR-SEC-03). Revisit if the app is ever opened to the public.
-5. **Keyboard focus.** Until FR-HM-07 ships, each heatmap cell is its own keyboard stop (NFR-A11Y-02). A single-stop design, if cheap, would be preferable.
+5. **Keyboard focus.** *Resolved in rev 2:* each heatmap is a single keyboard stop with a text summary and a day-by-day list (FR-HM-04, NFR-A11Y-02); arrow-key navigation remains FR-HM-07 (v1.1).
