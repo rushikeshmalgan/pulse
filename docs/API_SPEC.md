@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved (rev 1) |
 | **Date** | 2026-10-27 |
-| **Inputs** | `docs/PRD.md` (rev 2), `docs/TAD.md`, `docs/adr/0001`–`0006`, `docs/DB_SCHEMA.md` |
+| **Inputs** | `docs/PRD.md` (rev 3), `docs/TAD.md`, `docs/adr/0001`–`0006`, `docs/DB_SCHEMA.md` |
 | **Scope** | Every v1.0 Server Action, Route Handler, page-level data loader, the proxy and the manifest. v1.1 surfaces are listed by name only (§9). |
 
 **How to read.** Surface IDs: `A-` Server Action, `R-` Route Handler, `L-` page-level data loader, `P-` proxy, `M-` metadata route. Each surface lists its type, file path, auth rule, input (a Zod schema where there is input), output type, error codes, side effects (tables written, feed card upserts, streak cache invalidation), rate limit, and the PRD v1.0 requirements it serves. Table names are those of `docs/DB_SCHEMA.md`; algorithm names are those of `docs/TAD.md`. Blocks starting `// @zod` are executable and were run against sample inputs (§10).
@@ -855,7 +855,7 @@ The dark-mode theme colour is supplied by `<meta name="theme-color" media="(pref
 
 ## 7. Coverage check
 
-The matrix below is generated from the "FRs served" rows of §3–§6 by a script and compared with the 58 v1.0 requirements of PRD rev 2.
+The matrix below is generated from the "FRs served" rows of §3–§6 by a script and compared with the 58 v1.0 requirements of PRD rev 3.
 
 <!-- BEGIN COVERAGE MATRIX -->
 | FR | Title | Served by |
@@ -953,7 +953,7 @@ Found while specifying the surfaces. None changes a PRD requirement. The schema-
 8. **Onboarding `next` is validated** as a same-site path (`nextPath`): a security detail the TAD did not spell out.
 9. **Webhook display name** is `first_name` plus `last_name`, else `username`, else "New member" (`R-04`); the webhook never overwrites the member's handle.
 
-### 8.2 Notes for PRD rev 3 (recorded, not applied; the PRD is not edited)
+### 8.2 Notes for PRD rev 3 (applied in PRD rev 3, 2026-10-27)
 
 1. **FR-HM-06, ranking.** The PRD orders comparison rows by current group streak, then last-7-day completion percentage, then name, but does not say where a member with nothing scheduled in the last seven local days belongs, because their percentage is undefined. **Decision (approved 2026-10-27):** they sort after every member who has a percentage, then by name. The poll never reorders rows, so the order is fixed by the overview (`L-07`). Add this sentence to FR-HM-06.
 2. **FR-ACC-01 (second scenario) and journey J1 step 4** say the visitor returns to the invite and "is joined". The approved flow puts one tap on **Join group** between returning and being a member, and nothing joins without a user action. Reword both to "returns to the invite page and joins with one tap". The 60-second measure of goal G3 is unaffected.
@@ -985,7 +985,7 @@ Run on 2026-10-27 in an isolated scratch directory (nothing was added to the rep
 |---|---|
 | The 17 `// @zod` blocks transpile and load under Zod 4.6.7 | pass |
 | 83 sample-input assertions (valid inputs accepted, invalid rejected at the expected field path) | 83 of 83 pass |
-| Coverage matrix generated from the "FRs served" rows; compared with the 58 v1.0 requirements of PRD rev 2 | 57 served by a surface; FR-PWA-05 is the one whole-app property (§7.1) |
+| Coverage matrix generated from the "FRs served" rows; compared with the 58 v1.0 requirements of PRD rev 3 | 57 served by a surface; FR-PWA-05 is the one whole-app property (§7.1) |
 | Every surface serves at least one v1.0 requirement; none cites a v1.1 or unknown requirement | pass (29 surfaces) |
 | The catalog in §2 lists exactly the surfaces specified | pass (29 of 29) |
 

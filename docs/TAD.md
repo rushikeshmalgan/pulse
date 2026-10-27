@@ -5,7 +5,7 @@
 | **Status** | Approved (rev 2) |
 | **Date** | 2026-10-27 |
 | **Revisions** | rev 1: initial approval. rev 2: refinements found while designing the schema and API (`docs/DB_SCHEMA.md` §9, `docs/API_SPEC.md` §8.1), the documented `btree_gist` fallback, a one-tap join button, and test-plan items TP-08 and TP-09. |
-| **Inputs** | `docs/BRIEF.md`; `docs/PRD.md` (Approved rev 2), including the carry-forward notes in PRD §9.2 |
+| **Inputs** | `docs/BRIEF.md`; `docs/PRD.md` (Approved rev 3), including the carry-forward notes in PRD §9.2 |
 | **Companions** | `docs/DB_SCHEMA.md` (schema and data rules), `docs/API_SPEC.md` (every surface) |
 | **Next documents** | Tasks + test plan |
 | **Decision records** | `docs/adr/0001` … `0006` (index in §1.5) |

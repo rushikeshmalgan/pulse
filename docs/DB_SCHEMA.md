@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Approved (rev 1) |
 | **Date** | 2026-10-27 |
-| **Inputs** | `docs/PRD.md` (rev 2), `docs/TAD.md`, `docs/adr/0001`–`0006` |
+| **Inputs** | `docs/PRD.md` (rev 3), `docs/TAD.md`, `docs/adr/0001`–`0006` |
 | **Companion** | `docs/API_SPEC.md` (surface IDs such as `A-12` refer to it) |
 | **Next documents** | Tasks + test plan |
 
